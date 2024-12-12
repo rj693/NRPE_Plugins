@@ -1,0 +1,302 @@
+#!/bin/bash
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+PROGNAME=`basename $0`
+VERSION="version 0.93"
+AUTHOR="by Rajesh K Pal rajesh2.kumar.ext@oange.com"
+#############################
+# Program paths. If left empty the script tries to find the programs
+# in the PATH. Fill in the correct paths only if needed.
+#############################
+#usually /bin/awk or /usr/bin/awk
+AWK=""
+#usually /bin/grep or /usr/bin/grep
+GREP=""
+#usually /usr/bin/free
+FREE=""
+#############################
+
+if [ ${#AWK} == 0 ] #the variable AWK is not defined; trying to find awk in the PATH
+then
+        AWK=`which awk 2>&1`
+        AWK_EXISTS=$?
+        if [ "$AWK_EXISTS" != 0 ] || [ ${#AWK} == 0 ] #awk is not in the PATH or the variable AWK is empty
+        then
+                echo "Error! Can't find awk."
+                exit 3
+        fi
+fi
+
+if [ ${#GREP} == 0 ] #the variable GREP is not defined; trying to find grep in the PATH
+then
+        GREP=`which grep 2>&1`
+        GREP_EXISTS=$?
+        if [ "$GREP_EXISTS" != 0 ] || [ ${#GREP} == 0 ] #grep is not in the PATH or the variable GREP is empty
+        then
+                echo "Error! Can't find grep."
+                exit 3
+        fi
+fi
+
+if [ ${#FREE} == 0 ] #the variable FREE is not defined; trying to find free in the PATH
+then
+        FREE=`which free 2>&1`
+        FREE_EXISTS=$?
+        if [ "$FREE_EXISTS" != 0 ] || [ ${#FREE} == 0 ] #free is not in the PATH or the variable FREE is empty
+        then
+                echo "Error! Can't find free."
+                exit 3
+        fi
+fi
+
+
+#############################
+# Functions
+#############################
+
+print_version() {
+    echo "$VERSION $AUTHOR"
+}
+
+
+print_help() {
+print_version $PROGNAME $VERSION
+echo ""
+echo "$PROGNAME is a Nagios plugin used to check memory and swap usage."
+echo "on Linux and UNIX platforms. It uses the output of \"free\" and"
+echo "reports the following performance data:"
+echo "- current memory usage"
+echo "- current swap usage"
+echo "It measures the FREE memory + CACHED memory and compares it"
+echo "with the thresholds, which should be given as percents without"
+echo "the % sign. The warning threshold should be higher than critical."
+echo "You may use float numbers."
+echo " "
+echo "$PROGNAME [-v] [-h] [-w MemWarning] [-c MemCritical] [-W SwapWarning] [-C SwapCritical]"
+echo " "
+echo "Options:"
+echo "  --version|-v)"
+echo "    prints the program version"
+echo "  --help|-h)"
+echo "    prints this help information"
+echo "  -w)"
+echo "    specifies the warning threshold for free+cached memory"
+echo "  -c)"
+echo "    specifies the critical threshold for free+cached memory"
+echo "  -W)"
+echo "    specifies the warning threshold for free swap"
+echo "  -C)"
+echo "    specifies the critical threshold for free swap"
+echo " "
+echo " Example:"
+echo " check_free_mem -w 10 -c 5 -W 5 -C 10"
+echo " "
+exit 3
+}
+
+
+# float number comparison
+function fcomp() {
+    $AWK -v n1=$1 -v n2=$2 'BEGIN{ if (n1<=n2) exit 0; exit 1}'
+}
+
+
+#formats bytes => KBytes, MBytes, GBytes, TBytes
+function btokmgt() {
+        if [ $1 -lt 1024 ] #Bytes
+        then
+                echo "${1}B"
+        elif [ $1 -lt 1048576 ] #KBytes
+        then
+                echo "$1" | $AWK '{printf "%.1fKB", $1/1024}'
+        elif [ $1 -lt 1073741824 ] #MBytes
+        then
+                echo "$1" | $AWK '{printf "%.1fMB", $1/1048576}'
+        elif [ $1 -lt 1099511627776 ] #GBytes
+        then
+                echo "$1" | $AWK '{printf "%.1fGB", $1/1073741824}'
+        elif [ $1 -lt 1125899906842624 ] #TBytes
+        then
+                echo "$1" | $AWK '{printf "%.1fTB", $1/1099511627776}'
+        fi
+}
+#############################
+
+
+if [ $# -lt 1 ]; then
+    print_help
+    exit 3
+fi
+
+while test -n "$1"; do
+    case "$1" in
+        --help|-h)
+            print_help
+            exit 3
+            ;;
+        --version|-v)
+            print_version $PROGNAME $VERSION
+            exit 3
+            ;;
+        -w)
+            WarnMem=$2
+            shift
+            ;;
+        -c)
+            CritMem=$2
+            shift
+            ;;
+        -W)
+            WarnSwap=$2
+            shift
+            ;;
+        -C)
+            CritSwap=$2
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            print_help
+            exit 3
+            ;;
+    esac
+    shift
+done
+
+
+if fcomp $WarnMem 0
+then
+    WarnMem=0
+fi
+if fcomp 100 $WarnMem
+then
+    WarnMem=100
+fi
+
+if fcomp $CritMem 0
+then
+    CritMem=0
+fi
+if fcomp 100 $CritMem
+then
+    CritMem=100
+fi
+
+if fcomp $WarnMem $CritMem #WarnMem can't be lower than CritMem
+then
+    WarnMem=$CritMem
+fi
+
+if fcomp $WarnSwap 0
+then
+    WarnSwap=0
+fi
+if fcomp 100 $WarnSwap
+then
+    WarnSwap=100
+fi
+
+if fcomp $CritSwap 0
+then
+    CritSwap=0
+fi
+if fcomp 100 $CritSwap
+then
+    CritSwap=100
+fi
+
+if fcomp $WarnSwap $CritSwap #WarnSwap can't be lower than CritSwap
+then
+    WarnSwap=$CritSwap
+fi
+
+
+FREETXT=`$FREE -b`
+
+MemTxt=`echo "$FREETXT" | $GREP '^Mem:'`
+MemTotal=`echo $MemTxt | $AWK '{print $2}'`
+MemUsed=`echo $MemTxt | $AWK '{print $3}'`
+MemFree=`echo $MemTxt | $AWK '{print $4}'`
+MemShared=`echo $MemTxt | $AWK '{print $5}'`
+MemBuffers=`echo $MemTxt | $AWK '{print $6}'`
+MemCached=`echo $MemTxt | $AWK '{print $7}'`
+MemFreePlusCached=$[MemFree + $MemCached]
+
+MemUsedProc=`echo "$MemUsed $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+MemFreeProc=`echo "$MemFree $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+MemSharedProc=`echo "$MemShared $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+MemBuffersProc=`echo "$MemBuffers $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+MemCachedProc=`echo "$MemCached $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+MemFreePlusCachedProc=`echo "$MemFreePlusCached $MemTotal" | $AWK '{printf "%.1f", $1*100/$2}'`
+
+WarnMemAbs=`echo "$MemTotal $WarnMem" | $AWK '{printf "%d", $1*$2/100}'`
+CritMemAbs=`echo "$MemTotal $CritMem" | $AWK '{printf "%d", $1*$2/100}'`
+
+MemTotal_F=`btokmgt $MemTotal`
+MemUsed_F=`btokmgt $MemUsed`
+MemFree_F=`btokmgt $MemFree`
+MemShared_F=`btokmgt $MemShared`
+MemBuffers_F=`btokmgt $MemBuffers`
+MemCached_F=`btokmgt $MemCached`
+MemFreePlusCached_F=`btokmgt $MemFreePlusCached`
+
+
+SwapTxt=`echo "$FREETXT" | $GREP '^Swap:'`
+SwapTotal=`echo $SwapTxt | $AWK '{print $2}'`
+SwapUsed=`echo $SwapTxt | $AWK '{print $3}'`
+SwapFree=`echo $SwapTxt | $AWK '{print $4}'`
+SwapUsedProc=`echo "$SwapTxt" | $AWK '{printf "%.1f", $3*100/$2}'`
+SwapFreeProc=`echo "$SwapTxt" | $AWK '{printf "%.1f", $4*100/$2}'`
+
+WarnSwapAbs=`echo "$SwapTotal $WarnSwap" | $AWK '{printf "%d", $1*$2/100}'`
+CritSwapAbs=`echo "$SwapTotal $CritSwap" | $AWK '{printf "%d", $1*$2/100}'`
+
+SwapTotal_F=`btokmgt $SwapTotal`
+SwapUsed_F=`btokmgt $SwapUsed`
+SwapFree_F=`btokmgt $SwapFree`
+
+
+PerfData="'used memory'=${MemUsed}B;;;0;${MemTotal} 'free memory'=${MemFree}B;;;0;${MemTotal} 'shared memory'=${MemShared}B;;;0;${MemTotal} 'buffers memory'=${MemBuffers}B;;;0;${MemTotal} 'cached memory'=${MemCached}B;;;0;${MemTotal} 'free+cached memory'=${MemFreePlusCached}B;${WarnMemAbs};${CritMemAbs};0;${MemTotal} 'used swap'=${SwapUsed}B;${WarnSwapAbs};${CritSwapAbs};0;${SwapTotal}"
+
+if [ $MemFreePlusCached -gt $WarnMemAbs ] && [ $SwapFree -gt $WarnSwapAbs ] #OK
+then
+    echo "OK; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%), shared ${MemShared_F} (${MemSharedProc}%), buffers ${MemBuffers_F} (${MemBuffersProc}%), cached ${MemCached_F} (${MemCachedProc}%), free+cached ${MemFreePlusCached_F} (${MemFreePlusCachedProc}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%), free ${SwapFree_F} (${SwapFreeProc}%) | $PerfData"
+    exit 0
+fi
+
+if [ $MemFreePlusCached -le $CritMemAbs ] # critical; low memory
+then
+    echo "CRITICAL; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%), shared ${MemShared_F} (${MemSharedProc}%), buffers ${MemBuffers_F} (${MemBuffersProc}%), cached ${MemCached_F} (${MemCachedProc}%), free+cached ${MemFreePlusCached_F} (${MemFreePlusCachedProc}% <= ${CritMem}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%), free ${SwapFree_F} (${SwapFreeProc}%) | $PerfData"
+    exit 2
+fi
+
+if [ $SwapFree -le $CritSwapAbs ] #critical; low swap
+then
+    echo "CRITICAL; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%), shared ${MemShared_F} (${MemSharedProc}%), buffers ${MemBuffers_F} (${MemBuffersProc}%), cached ${MemCached_F} (${MemCachedProc}%), free+cached ${MemFreePlusCached_F} (${MemFreePlusCachedProc}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%), free ${SwapFree_F} (${SwapFreeProc}% <= ${CritSwap}%) | $PerfData"
+    exit 2
+fi
+
+if [ $MemFreePlusCached -gt $CritMemAbs ] && [ $MemFreePlusCached -le $WarnMemAbs ] #warning; low memory
+then
+    echo "Warning; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%), shared ${MemShared_F} (${MemSharedProc}%), buffers ${MemBuffers_F} (${MemBuffersProc}%), cached ${MemCached_F} (${MemCachedProc}%), free+cached ${MemFreePlusCached_F} (${CritMem}% < ${MemFreePlusCachedProc}% <= ${WarnMem}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%), free ${SwapFree_F} (${SwapFreeProc}%) | $PerfData"
+    exit 1
+fi
+
+if [ $SwapFree -gt $CritSwapAbs ] && [ $SwapFree -le $WarnSwapAbs ] #warning; low swap
+then
+    echo "Warning; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%), shared ${MemShared_F} (${MemSharedProc}%), buffers ${MemBuffers_F} (${MemBuffersProc}%), cached ${MemCached_F} (${MemCachedProc}%), free+cached ${MemFreePlusCached_F} (${MemFreePlusCachedProc}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%), free ${SwapFree_F} (${CritSwap}% < ${SwapFreeProc}% <= ${WarnSwap}%) | $PerfData"
+    echo "Warning; Memory: total ${MemTotal_F}, used ${MemUsed_F} (${MemUsedProc}%), free ${MemFree_F} (${MemFreeProc}%); Swap: total ${SwapTotal_F}, used ${SwapUsed_F} (${SwapUsedProc}%>${WarnSwap}%), free ${SwapFree_F} (${SwapFreeProc}%) | $PerfData"
+    exit 1
+fi
